@@ -1,0 +1,10 @@
+numpy
+pandas
+scikit-learn
+matplotlib
+joblib
+# (updated on 2026-26)
+shap
+flask
+
+# (updated on 2026-27)

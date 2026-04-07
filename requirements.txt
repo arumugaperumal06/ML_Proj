@@ -6,5 +6,5 @@ joblib
 # (updated on 2026-26)
 shap
 flask
-
+flask-cors
 # (updated on 2026-27)

@@ -3,15 +3,21 @@ import pandas as pd
 import shap
 import numpy as np
 
-# Load model
-model = joblib.load('model/model.pkl')
+# -------- LOAD MODEL + SCALER --------
+model   = joblib.load('model/model.pkl')
+scaler  = joblib.load('model/scaler.pkl')   # ← FIX: was missing; predictions were on unscaled data
 
-# SHAP explainer
 explainer = shap.TreeExplainer(model)
 
 
 def explain_prediction(input_data):
-    sample = pd.DataFrame([input_data])
+    raw = pd.DataFrame([input_data])
+
+    # ---- SCALE (FIX: must match training pipeline) ----
+    sample = pd.DataFrame(
+        scaler.transform(raw),
+        columns=raw.columns
+    )
 
     pred = model.predict(sample)[0]
     prob = model.predict_proba(sample)[0][1]
@@ -19,68 +25,42 @@ def explain_prediction(input_data):
     print("\n🔍 Prediction:", pred)
     print("📊 Probability:", prob)
 
-    # Get SHAP values
+    # ---- SHAP ----
     shap_values = explainer.shap_values(sample)
 
+    if isinstance(shap_values, list):
+        vals = shap_values[1][0]
+    else:
+        vals = shap_values[0]
+
+    vals     = np.array(vals).flatten()
     features = list(sample.columns)
 
-    # -------- SAFE EXTRACTION --------
-    try:
-        if isinstance(shap_values, list):
-            vals = shap_values[1]
-        else:
-            vals = shap_values
+    contributions = {features[i]: float(vals[i]) for i in range(len(features))}
 
-        vals = np.array(vals)
+    sorted_features = sorted(contributions.items(), key=lambda x: abs(x[1]), reverse=True)
+    reasons = [k for k, v in sorted_features[:2]]
 
-        # Reduce dimensions safely
-        while vals.ndim > 1:
-            vals = vals[0]
-
-        vals = vals.flatten()
-
-    except Exception as e:
-        print("⚠️ SHAP processing issue:", e)
-        vals = np.zeros(len(features))
-
-    # -------- MATCH FEATURE LENGTH SAFELY --------
-    contributions = {}
-
-    min_len = min(len(features), len(vals))
-
-    for i in range(min_len):
-        contributions[features[i]] = float(vals[i])
-
-    # Fill missing features (if SHAP gave less values)
-    if len(vals) < len(features):
-        for i in range(len(vals), len(features)):
-            contributions[features[i]] = 0.0
-
-    # -------- PRINT OUTPUT --------
-    print("\n📌 Feature Contributions:")
+    print("\n📌 Contributions:")
     for k, v in contributions.items():
-        print(f"{k}: {v:.4f}")
+        print(f"  {k}: {v:+.4f}")
 
-    # -------- REASONS --------
-    reasons = [k for k, v in contributions.items() if v > 0.1]
-
-    print("\n🚨 Main Reasons:", reasons if reasons else "No major factors")
+    print("\n🚨 Main Reasons:", reasons)
 
     return {
-        "prediction": int(pred),
-        "probability": float(prob),
+        "prediction":    int(pred),
+        "probability":   float(prob),
         "contributions": contributions,
-        "reasons": reasons
+        "reasons":       reasons,
     }
 
 
-# TEST
+# -------- TEST --------
 if __name__ == "__main__":
     sample = {
-        "temperature": 330,
-        "vibration": 1800,
-        "pressure": 50,
-        "runtime": 1200
+        "temperature": 360,
+        "vibration":   800,
+        "pressure":    40,
+        "runtime":     500,
     }
-
     explain_prediction(sample)

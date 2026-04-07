@@ -5,8 +5,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import os
 
-# Load model
+# ==============================
+# LOAD MODEL + SCALER
+# ==============================
 model = joblib.load('model/model.pkl')
+scaler = joblib.load('model/scaler.pkl')   # ← FIX: was missing; caused stuck/wrong predictions
 
 # CSV file path
 file_path = '../data/live_data.csv'
@@ -19,52 +22,57 @@ if not os.path.exists(file_path):
     ])
     df_init.to_csv(file_path, index=False)
 
-# Initial values
+# Initial sensor values
 temperature = 300
 vibration = 1200
 pressure = 30
 runtime = 100
 
-# Graph lists
+# Graph history
 time_step = []
 runtime_list = []
 prob_list = []
 
-# Previous probability (for trend)
 prev_prob = 0
 
 plt.ion()
 
 while True:
-    # --- SIMULATION LOGIC ---
+    # --- SIMULATE SENSOR DRIFT ---
     temperature += random.uniform(-1, 2)
-    vibration += random.uniform(-50, 80)
-    pressure += random.uniform(-2, 3)
-    runtime += random.uniform(5, 15)
+    vibration   += random.uniform(-50, 80)
+    pressure    += random.uniform(-2, 3)
+    runtime     += random.uniform(5, 15)
 
-    # Clamp values
+    # Clamp to realistic ranges
     temperature = max(280, min(350, temperature))
-    vibration = max(800, min(2200, vibration))
-    pressure = max(10, min(70, pressure))
+    vibration   = max(800, min(2200, vibration))
+    pressure    = max(10,  min(70, pressure))
 
     # Random spike
     if random.random() < 0.1:
         vibration += random.uniform(200, 400)
         print("⚡ Sudden vibration spike!")
 
-    # Create input
-    sample = pd.DataFrame([{
+    # --- BUILD SAMPLE ---
+    raw_sample = pd.DataFrame([{
         'temperature': temperature,
-        'vibration': vibration,
-        'pressure': pressure,
-        'runtime': runtime
+        'vibration':   vibration,
+        'pressure':    pressure,
+        'runtime':     runtime,
     }])
 
-    # Prediction
-    pred = model.predict(sample)[0]
-    prob = model.predict_proba(sample)[0][1]
+    # --- SCALE INPUT (FIX: apply same scaler used during training) ---
+    scaled_sample = pd.DataFrame(
+        scaler.transform(raw_sample),
+        columns=raw_sample.columns
+    )
 
-    # Status levels
+    # --- PREDICT ---
+    pred = model.predict(scaled_sample)[0]
+    prob = model.predict_proba(scaled_sample)[0][1]
+
+    # --- STATUS ---
     if prob < 0.3:
         status = "SAFE"
     elif prob < 0.7:
@@ -72,7 +80,7 @@ while True:
     else:
         status = "🚨 FAILURE RISK"
 
-    # Reasoning (simple XAI)
+    # --- SIMPLE RULE-BASED REASONS ---
     reasons = []
     if temperature > 320:
         reasons.append("High Temp")
@@ -83,14 +91,10 @@ while True:
     if runtime > 1000:
         reasons.append("Long Runtime")
 
-    # Trend detection
-    trend = "📈 Increasing Risk" if prob > prev_prob else "📉 Stable"
+    trend   = "📈 Increasing Risk" if prob > prev_prob else "📉 Stable"
+    health  = 100 - (prob * 100)
     prev_prob = prob
 
-    # Health score
-    health = 100 - (prob * 100)
-
-    # Print output
     print(f"""
 Temp: {temperature:.2f} | Vib: {vibration:.2f} | Pressure: {pressure:.2f} | Runtime: {runtime:.2f}
 Status: {status} | Risk: {prob:.2f} | Health: {health:.2f}%
@@ -98,14 +102,14 @@ Reason: {", ".join(reasons) if reasons else "Normal"}
 {trend}
 """)
 
-    # Save to CSV
+    # --- APPEND TO CSV ---
     new_row = pd.DataFrame([{
         'temperature': temperature,
-        'vibration': vibration,
-        'pressure': pressure,
-        'runtime': runtime,
-        'prediction': pred,
-        'probability': prob
+        'vibration':   vibration,
+        'pressure':    pressure,
+        'runtime':     runtime,
+        'prediction':  pred,
+        'probability': prob,
     }])
     new_row.to_csv(file_path, mode='a', header=False, index=False)
 
@@ -116,25 +120,28 @@ Reason: {", ".join(reasons) if reasons else "Normal"}
 
     plt.clf()
 
-    # Runtime graph
     plt.subplot(2, 1, 1)
-    plt.plot(time_step, runtime_list)
+    plt.plot(time_step, runtime_list, color='steelblue')
     plt.title("Runtime Over Time")
+    plt.ylabel("Runtime (min)")
 
-    # Probability graph
     plt.subplot(2, 1, 2)
-    plt.plot(time_step, prob_list)
+    plt.plot(time_step, prob_list, color='crimson')
+    plt.axhline(0.65, color='red',    linestyle='--', linewidth=0.8, label='Failure threshold')
+    plt.axhline(0.40, color='orange', linestyle='--', linewidth=0.8, label='Warning threshold')
     plt.title("Failure Probability Over Time")
+    plt.ylabel("Probability")
+    plt.legend()
 
+    plt.tight_layout()
     plt.pause(0.1)
 
-    # Maintenance reset
+    # --- MAINTENANCE RESET ---
     if runtime > 1200:
         print("🔧 Maintenance performed → resetting system\n")
         temperature = 300
-        vibration = 1200
-        pressure = 30
-        runtime = 100
+        vibration   = 1200
+        pressure    = 30
+        runtime     = 100
 
-    # Delay
     time.sleep(2)
